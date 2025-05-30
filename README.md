@@ -1,119 +1,574 @@
 # AI Engeneering-Fiap2025
 
  https://arnaldojr.github.io/cognitivecomputing/
-Para implementar os Thresholds de Alerta por Sensor no Node-RED, você precisa criar um fluxo que:
-
-1. Receba os dados JSON (como esse do seu inject).
 
 
-2. Avalie cada sensor de uma região com base nos thresholds fornecidos.
-
-
-3. Monte um JSON de alerta, incluindo:
-
-Sensores em nível Atenção, Alerta ou Crítico;
-
-O pior nível encontrado (nivel_alerta_geral);
-
-O timestamp e as coordenadas da região.
-
-
-
-4. Publique o alerta no tópico MQTT defesa_civil/alertas/<seu_rm>.
-
-
-
-
----
-
-✅ Etapas práticas no Node-RED
-
-1. Função para classificar o nível de cada sensor
-
-Crie um nó function chamado classificaNivel com algo assim:
-
-// Define os thresholds por sensor
-const thresholds = {
-  nivel_rio:       [40, 60, 80],
-  pluviometro:     [10, 30, 50],
-  inclinometro:    [2, 10, 15],
-  sismografo:      [2.0, 4.0, 6.0],
-  umidade_solo:    [60, 70, 90],
-  temperatura:     [35, 40, 45],
-  detector_fumaca: [10, 60, 80],
-  velocidade_vento:[20, 50, 80],
-  barometro:       [980, 990, 1010, 1020],
-  radar_doppler:   [30, 70, 90],
-  acelerometro:    [0.2, 0.5, 0.8],
-  magnetometro:    [50, 100, 150],
-  umidade_ar:      [70, 80, 90],
-  radar_chuva:     [20, 40, 60],
-};
-
-// Função para determinar o nível
-function getNivel(sensor, valor) {
-  const t = thresholds[sensor];
-  if (!t) return 'desconhecido';
-
-  if (sensor === 'barometro') {
-    if (valor < t[0]) return 'crítico';
-    if (valor < t[1]) return 'alerta';
-    if (valor < t[2]) return 'atenção';
-    if (valor <= t[3]) return 'normal';
-    return 'atenção'; // Acima de 1020
-  }
-
-  if (valor <= t[0]) return 'normal';
-  if (valor <= t[1]) return 'atenção';
-  if (valor <= t[2]) return 'alerta';
-  return 'crítico';
-}
-
-// Parâmetros fixos
-const rm = "<seu_rm>";
-const regiao = "sudeste"; // troque pela sua região
-
-const dados = msg.payload.dados_por_regiao[regiao];
-const sensores = dados.sensores;
-const sensores_criticos = {};
-let nivelGeral = 'normal';
-
-const prioridade = ['normal', 'atenção', 'alerta', 'crítico'];
-
-for (let sensor in sensores) {
-  const valor = sensores[sensor];
-  const nivel = getNivel(sensor, valor);
-
-  if (nivel !== 'normal') {
-    sensores_criticos[sensor] = valor;
-    if (prioridade.indexOf(nivel) > prioridade.indexOf(nivelGeral)) {
-      nivelGeral = nivel;
+[
+    {
+        "id": "845ee43096d6094e",
+        "type": "tab",
+        "label": "Sensores Sul",
+        "disabled": false,
+        "info": "",
+        "env": []
+    },
+    {
+        "id": "mqtt_in",
+        "type": "mqtt in",
+        "z": "845ee43096d6094e",
+        "name": "Sensores",
+        "topic": "defesa_civil/sensores/todos",
+        "qos": "2",
+        "datatype": "auto",
+        "broker": "bf71908a6390316d",
+        "nl": false,
+        "rap": true,
+        "rh": 0,
+        "inputs": 0,
+        "x": 80,
+        "y": 420,
+        "wires": [
+            [
+                "filtro_regiao"
+            ]
+        ]
+    },
+    {
+        "id": "filtro_regiao",
+        "type": "function",
+        "z": "845ee43096d6094e",
+        "name": "Filtrar Região/Sensores",
+        "func": "const REGIAO = \"sul\";\nconst COORDENADAS = {lat: -30.0346, lng: -51.2177};\nconst SENSORES = [\"temperatura\", \"umidade_solo\", \"detector_fumaca\", \"velocidade_vento\", \"pluviometro\"];\n\nlet dados;\ntry {\n dados = (typeof msg.payload === 'string') ? JSON.parse(msg.payload) : msg.payload;\n} catch(e) {\n node.error(\"JSON inválido\", msg);\n return null;\n}\n\nlet origem = dados.dados_por_regiao[REGIAO];\nif (!origem) {\n node.warn(\"Dados para a região '\" + REGIAO + \"' não encontrados no payload.\");\n return null;\n}\n\nlet sensoresFiltrados = {};\nSENSORES.forEach(s => {\n if(origem.sensores.hasOwnProperty(s)) {\n sensoresFiltrados[s] = origem.sensores[s];\n } else {\n node.warn(\"Sensor '\" + s + \"' não encontrado para a região '\" + REGIAO + \"'.\");\n }\n});\n\nmsg.filtrado = {\n regiao: REGIAO,\n coordenadas: COORDENADAS,\n estacao_id: dados.estacao_id,\n timestamp: dados.timestamp,\n sensores: sensoresFiltrados\n};\nreturn msg;",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 300,
+        "y": 120,
+        "wires": [
+            [
+                "debug_filtrado",
+                "monta_dashboard",
+                "gera_alerta"
+            ]
+        ]
+    },
+    {
+        "id": "debug_filtrado",
+        "type": "debug",
+        "z": "845ee43096d6094e",
+        "name": "JSON Filtrado",
+        "active": false,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "filtrado",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 280,
+        "y": 60,
+        "wires": []
+    },
+    {
+        "id": "monta_dashboard",
+        "type": "function",
+        "z": "845ee43096d6094e",
+        "name": "Preparação de Dados",
+        "func": "let d = msg.filtrado;\nlet ts = new Date(d.timestamp);\nfunction dois(x){ return (x<10?'0':'')+x; }\nlet timestamp_formatado = dois(ts.getDate())+\"/\"+dois(ts.getMonth()+1)+\"/\"+ts.getFullYear()+\" \"+dois(ts.getHours())+\":\"+dois(ts.getMinutes())+\":\"+dois(ts.getSeconds());\nmsg.dashboard = {\n regiao: d.regiao,\n coordenadas: d.coordenadas,\n estacao_id: d.estacao_id,\n timestamp: d.timestamp,\n timestamp_formatado: timestamp_formatado,\n sensores: d.sensores\n};\nreturn msg;",
+        "outputs": 5,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 500,
+        "y": 480,
+        "wires": [
+            [
+                "ui_text_regiao",
+                "ui_text_estacao",
+                "ui_text_coords",
+                "ui_text_timestamp",
+                "ui_gauge_inclinometro",
+                "ui_gauge_acelerometro",
+                "ui_gauge_nivelrio"
+            ],
+            [
+                "ui_gauge_sismografo"
+            ],
+            [
+                "ui_gauge_nivelrio"
+            ],
+            [
+                "ui_gauge_pluviometro"
+            ],
+            [
+                "ui_gauge_acelerometro"
+            ]
+        ]
+    },
+    {
+        "id": "gera_alerta",
+        "type": "function",
+        "z": "845ee43096d6094e",
+        "name": "Json Alerta",
+        "func": "// Thresholds e avaliação\nconst thresholds = {\nnivel_rio: [40,60,80],\n    pluviometro: [10,30,50],\n    inclinometro: [2,10,15],\n    sismografo: [2.0, 4.0, 6.0],\n    umidade_solo: [60, 70, 90], \n    temperatura: [35, 40, 45], \n    detector_fumaca: [10, 60, 80], \n    velocidade_vento:[20, 50, 80], \n    barometro: [980, 990, 1010, 1020], \n    radar_doppler: [30, 70, 90], \n    acelerometro: [0.2, 0.5, 0.8], \n    magnetometro: [50, 100, 150], \n    umidade_ar: [70, 80, 90], \n    radar_chuva: [20, 40, 60],\n};\nconst niveis = [\"Normal\", \"Atenção\", \"Alerta\", \"Crítico\"];\nlet sens = msg.filtrado.sensores;\nlet sensores_criticos = {};\nlet pior = 0;\n\nfor (let k in sens) {\n if (sens.hasOwnProperty(k)) {\n let v = sens[k];\n let lim = thresholds[k];\n let idx = 0;\n\n if (lim) {\n if (v > lim[2]) {\n idx = 3;\n } else if (v > lim[1]) {\n idx = 2;\n } else if (v > lim[0]) {\n idx = 1;\n }\n } else {\n node.warn(\"Thresholds não definidos para o sensor: \" + k);\n }\n\n if (idx > 0) {\n sensores_criticos[k] = v;\n sensores_criticos[k + \"_nivel\"] = niveis[idx]; \n }\n if (idx > pior) pior = idx;\n }\n}\n\nmsg.payload = {\n aluno_rm: \"96229\",\n regiao: msg.filtrado.regiao,\n coordenadas: msg.filtrado.coordenadas,\n timestamp: new Date().toISOString(),\n sensores_criticos: sensores_criticos,\n nivel_alerta_geral: niveis[pior]\n};\nreturn msg;",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 130,
+        "y": 680,
+        "wires": [
+            [
+                "mqtt_out",
+                "ui_text_nivel",
+                "c774c3812ca5dbbe"
+            ]
+        ]
+    },
+    {
+        "id": "mqtt_out",
+        "type": "mqtt out",
+        "z": "845ee43096d6094e",
+        "name": "Alerta RM 96229",
+        "topic": "defesa_civil/alertas/96229",
+        "qos": "2",
+        "retain": "false",
+        "respTopic": "",
+        "contentType": "",
+        "userProps": "",
+        "correl": "",
+        "expiry": "",
+        "broker": "bf71908a6390316d",
+        "x": 150,
+        "y": 760,
+        "wires": []
+    },
+    {
+        "id": "ui_text_regiao",
+        "type": "ui_text",
+        "z": "845ee43096d6094e",
+        "group": "390c3532d756d7d2",
+        "order": 1,
+        "width": 6,
+        "height": 1,
+        "name": "Região",
+        "label": "Região:",
+        "format": "{{msg.dashboard.regiao}}",
+        "layout": "row-spread",
+        "className": "",
+        "style": false,
+        "font": "",
+        "fontSize": "",
+        "color": "#000000",
+        "x": 820,
+        "y": 100,
+        "wires": []
+    },
+    {
+        "id": "ui_text_estacao",
+        "type": "ui_text",
+        "z": "845ee43096d6094e",
+        "group": "390c3532d756d7d2",
+        "order": 5,
+        "width": 3,
+        "height": 1,
+        "name": "Estação ID",
+        "label": "Estação:",
+        "format": "{{msg.dashboard.estacao_id}}",
+        "layout": "row-spread",
+        "className": "",
+        "style": false,
+        "font": "",
+        "fontSize": "",
+        "color": "#000000",
+        "x": 830,
+        "y": 160,
+        "wires": []
+    },
+    {
+        "id": "ui_text_coords",
+        "type": "ui_text",
+        "z": "845ee43096d6094e",
+        "group": "390c3532d756d7d2",
+        "order": 2,
+        "width": 8,
+        "height": 1,
+        "name": "Coordenadas",
+        "label": "Coordenadas:",
+        "format": "Lat: {{msg.dashboard.coordenadas.lat}} Lng: {{msg.dashboard.coordenadas.lng}}",
+        "layout": "row-spread",
+        "className": "",
+        "style": false,
+        "font": "",
+        "fontSize": "",
+        "color": "#000000",
+        "x": 840,
+        "y": 220,
+        "wires": []
+    },
+    {
+        "id": "ui_text_timestamp",
+        "type": "ui_text",
+        "z": "845ee43096d6094e",
+        "group": "390c3532d756d7d2",
+        "order": 4,
+        "width": 9,
+        "height": 1,
+        "name": "Timestamp",
+        "label": "Timestamp:",
+        "format": "{{msg.dashboard.timestamp_formatado}}",
+        "layout": "row-spread",
+        "className": "",
+        "style": false,
+        "font": "",
+        "fontSize": "",
+        "color": "#000000",
+        "x": 830,
+        "y": 280,
+        "wires": []
+    },
+    {
+        "id": "ui_gauge_inclinometro",
+        "type": "ui_gauge",
+        "z": "845ee43096d6094e",
+        "name": "Temperatura",
+        "group": "390c3532d756d7d2",
+        "order": 8,
+        "width": 3,
+        "height": 3,
+        "gtype": "donut",
+        "title": "Temperatura",
+        "label": "C°",
+        "format": "{{msg.dashboard.sensores.temperatura}}",
+        "min": 0,
+        "max": "50",
+        "colors": [
+            "#5cff5c",
+            "#ffeb3b",
+            "#ff0000"
+        ],
+        "seg1": "10",
+        "seg2": "30",
+        "diff": false,
+        "className": "",
+        "x": 830,
+        "y": 460,
+        "wires": []
+    },
+    {
+        "id": "ui_gauge_sismografo",
+        "type": "ui_gauge",
+        "z": "845ee43096d6094e",
+        "name": "Umidade do Solo",
+        "group": "390c3532d756d7d2",
+        "order": 9,
+        "width": 3,
+        "height": 3,
+        "gtype": "donut",
+        "title": "Umidade do Solo",
+        "label": "%",
+        "format": "{{msg.dashboard.sensores.umidade_solo}}",
+        "min": 0,
+        "max": "90",
+        "colors": [
+            "#5cff5c",
+            "#ffeb3b",
+            "#ff0000"
+        ],
+        "seg1": "30",
+        "seg2": "60",
+        "diff": false,
+        "className": "",
+        "x": 850,
+        "y": 500,
+        "wires": []
+    },
+    {
+        "id": "ui_gauge_nivelrio",
+        "type": "ui_gauge",
+        "z": "845ee43096d6094e",
+        "name": "Detector de fumaça",
+        "group": "390c3532d756d7d2",
+        "order": 10,
+        "width": 3,
+        "height": 3,
+        "gtype": "donut",
+        "title": "Detector de fumaça",
+        "label": "ppm",
+        "format": "{{msg.dashboard.sensores.detector_fumaca}}",
+        "min": 0,
+        "max": "80",
+        "colors": [
+            "#5cff5c",
+            "#ffeb3b",
+            "#ff0000"
+        ],
+        "seg1": "10",
+        "seg2": 60,
+        "diff": false,
+        "className": "",
+        "x": 850,
+        "y": 540,
+        "wires": []
+    },
+    {
+        "id": "ui_gauge_pluviometro",
+        "type": "ui_gauge",
+        "z": "845ee43096d6094e",
+        "name": "Velocidade do Vento(mm/h",
+        "group": "390c3532d756d7d2",
+        "order": 11,
+        "width": 3,
+        "height": 3,
+        "gtype": "donut",
+        "title": "Velocidade do Vento(mm/h)",
+        "label": "mm/h",
+        "format": "{{msg.dashboard.sensores.velocidade_vento}}",
+        "min": 0,
+        "max": "30",
+        "colors": [
+            "#5cff5c",
+            "#ffeb3b",
+            "#ff0000"
+        ],
+        "seg1": 10,
+        "seg2": 30,
+        "diff": false,
+        "className": "",
+        "x": 880,
+        "y": 580,
+        "wires": []
+    },
+    {
+        "id": "ui_gauge_acelerometro",
+        "type": "ui_gauge",
+        "z": "845ee43096d6094e",
+        "name": "Pluviometro",
+        "group": "390c3532d756d7d2",
+        "order": 15,
+        "width": 3,
+        "height": 3,
+        "gtype": "donut",
+        "title": "Pluviometro",
+        "label": "",
+        "format": "{{msg.dashboard.sensores.pluviometro}}",
+        "min": 0,
+        "max": "60",
+        "colors": [
+            "#5cff5c",
+            "#ffeb3b",
+            "#ff0000"
+        ],
+        "seg1": "10",
+        "seg2": "30",
+        "diff": false,
+        "className": "",
+        "x": 830,
+        "y": 620,
+        "wires": []
+    },
+    {
+        "id": "ui_text_nivel",
+        "type": "ui_text",
+        "z": "845ee43096d6094e",
+        "group": "390c3532d756d7d2",
+        "order": 20,
+        "width": 6,
+        "height": 1,
+        "name": "Nível Geral de Risco",
+        "label": "Nível de Alerta Geral:",
+        "format": "{{msg.payload.nivel_alerta_geral}}",
+        "layout": "row-spread",
+        "className": "",
+        "style": false,
+        "font": "",
+        "fontSize": "",
+        "color": "#000000",
+        "x": 860,
+        "y": 680,
+        "wires": []
+    },
+    {
+        "id": "c774c3812ca5dbbe",
+        "type": "debug",
+        "z": "845ee43096d6094e",
+        "name": "debug 1",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "false",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 480,
+        "y": 580,
+        "wires": []
+    },
+    {
+        "id": "3c58cb4f60d84d72",
+        "type": "ui_spacer",
+        "z": "845ee43096d6094e",
+        "name": "spacer",
+        "group": "390c3532d756d7d2",
+        "order": 3,
+        "width": 14,
+        "height": 1
+    },
+    {
+        "id": "312433d9d6998b18",
+        "type": "ui_spacer",
+        "z": "845ee43096d6094e",
+        "name": "spacer",
+        "group": "390c3532d756d7d2",
+        "order": 6,
+        "width": 2,
+        "height": 1
+    },
+    {
+        "id": "ca8655c2486b5ac6",
+        "type": "ui_spacer",
+        "z": "845ee43096d6094e",
+        "name": "spacer",
+        "group": "390c3532d756d7d2",
+        "order": 7,
+        "width": 14,
+        "height": 1
+    },
+    {
+        "id": "e56b197568c39d8b",
+        "type": "ui_spacer",
+        "z": "845ee43096d6094e",
+        "name": "spacer",
+        "group": "390c3532d756d7d2",
+        "order": 12,
+        "width": 2,
+        "height": 1
+    },
+    {
+        "id": "37e76258b06283f0",
+        "type": "ui_spacer",
+        "z": "845ee43096d6094e",
+        "name": "spacer",
+        "group": "390c3532d756d7d2",
+        "order": 13,
+        "width": 2,
+        "height": 1
+    },
+    {
+        "id": "6463b0dc900ceec9",
+        "type": "ui_spacer",
+        "z": "845ee43096d6094e",
+        "name": "spacer",
+        "group": "390c3532d756d7d2",
+        "order": 14,
+        "width": 2,
+        "height": 1
+    },
+    {
+        "id": "7bcedb9a3a78d1b7",
+        "type": "ui_spacer",
+        "z": "845ee43096d6094e",
+        "name": "spacer",
+        "group": "390c3532d756d7d2",
+        "order": 16,
+        "width": 11,
+        "height": 1
+    },
+    {
+        "id": "7520ef67dd1d2ebc",
+        "type": "ui_spacer",
+        "z": "845ee43096d6094e",
+        "name": "spacer",
+        "group": "390c3532d756d7d2",
+        "order": 17,
+        "width": 11,
+        "height": 1
+    },
+    {
+        "id": "41f4afd068f35591",
+        "type": "ui_spacer",
+        "z": "845ee43096d6094e",
+        "name": "spacer",
+        "group": "390c3532d756d7d2",
+        "order": 18,
+        "width": 11,
+        "height": 1
+    },
+    {
+        "id": "376e97c619ebfa74",
+        "type": "ui_spacer",
+        "z": "845ee43096d6094e",
+        "name": "spacer",
+        "group": "390c3532d756d7d2",
+        "order": 19,
+        "width": 3,
+        "height": 1
+    },
+    {
+        "id": "92fe67a3530d5a51",
+        "type": "ui_spacer",
+        "z": "845ee43096d6094e",
+        "name": "spacer",
+        "group": "390c3532d756d7d2",
+        "order": 21,
+        "width": 5,
+        "height": 1
+    },
+    {
+        "id": "bf71908a6390316d",
+        "type": "mqtt-broker",
+        "name": "",
+        "broker": "54.157.123.32",
+        "port": "8080",
+        "clientid": "",
+        "autoConnect": true,
+        "usetls": false,
+        "protocolVersion": "4",
+        "keepalive": "60",
+        "cleansession": true,
+        "autoUnsubscribe": true,
+        "birthTopic": "",
+        "birthQos": "0",
+        "birthRetain": "false",
+        "birthPayload": "",
+        "birthMsg": {},
+        "closeTopic": "",
+        "closeQos": "0",
+        "closeRetain": "false",
+        "closePayload": "",
+        "closeMsg": {},
+        "willTopic": "",
+        "willQos": "0",
+        "willRetain": "false",
+        "willPayload": "",
+        "willMsg": {},
+        "userProps": "",
+        "sessionExpiry": ""
+    },
+    {
+        "id": "390c3532d756d7d2",
+        "type": "ui_group",
+        "name": "RM96229",
+        "tab": "9c40a343f1cc93ca",
+        "order": 1,
+        "disp": true,
+        "width": 14,
+        "collapse": false,
+        "className": ""
+    },
+    {
+        "id": "9c40a343f1cc93ca",
+        "type": "ui_tab",
+        "name": "Sensores Região Sul",
+        "icon": "dashboard",
+        "disabled": false,
+        "hidden": false
     }
-  }
-}
-
-msg.payload = {
-  aluno_rm: rm,
-  regiao: regiao,
-  coordenadas: dados.coordenadas,
-  timestamp: msg.payload.timestamp,
-  sensores_criticos: sensores_criticos,
-  nivel_alerta_geral: nivelGeral
-};
-
-return msg;
-
-
----
-
-2. Publicar no MQTT
-
-Adicione um nó mqtt out, configure seu broker e publique no tópico:
-
-defesa_civil/alertas/<seu_rm>
-
-
----
-
-Se quiser, posso gerar esse fluxo completo em .json pra você importar direto no Node-RED. Deseja isso? Se sim, me informe seu RM e a região que está usando.
-
+]
